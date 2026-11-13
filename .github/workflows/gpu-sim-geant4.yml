@@ -62,6 +62,39 @@ jobs:
 
       ### BUILD ###
 
+      # Add an "h100sim" configure/build/test preset to the CI presets: the
+      # spack "orange" configuration plus CUDA (PTX for the H100, shared
+      # runtime), with longer test timeouts for the simulator and a ctest
+      # JUnit file holding every test.
+      - name: Add simulated-H100 presets
+        run: |
+          jq '.configurePresets += [{
+                "name": "h100sim",
+                "inherits": ["orange", ".cuda"],
+                "cacheVariables": {
+                  "CELERITAS_DEBUG": {"type": "BOOL", "value": "OFF"},
+                  "CELERITAS_BUILTIN_covfie": {"type": "BOOL", "value": "ON"},
+                  "CMAKE_CUDA_ARCHITECTURES": "90-virtual",
+                  "CMAKE_CUDA_COMPILER": "/usr/local/cuda-13.0/bin/nvcc",
+                  "CMAKE_CUDA_COMPILER_LAUNCHER": "ccache",
+                  "CMAKE_CUDA_RUNTIME_LIBRARY": "Shared",
+                  "CUDAToolkit_ROOT": "/usr/local/cuda-13.0",
+                  "CMAKE_CXX_FLAGS": "-Wall -Wextra -pedantic -Werror -Wno-error=deprecated-declarations -isystem /usr/local/cuda-13.0/targets/x86_64-linux/include/cccl",
+                  "CMAKE_UNITY_BUILD": {"type": "BOOL", "value": "ON"}
+                }
+              }]
+            | .buildPresets += [{
+                "name": "h100sim", "configurePreset": "h100sim",
+                "inherits": "base", "jobs": 3
+              }]
+            | .testPresets += [{
+                "name": "h100sim", "configurePreset": "h100sim",
+                "inherits": ".base",
+                "execution": {"jobs": 3, "timeout": 1800},
+                "output": {"outputJUnitFile": "$env{GITHUB_WORKSPACE}/test-output/ctest/all.xml"}
+              }]' scripts/cmake-presets/ci-ubuntu-github.json \
+            > scripts/cmake-presets/ci-ubuntu-github-h100sim.json
+
       - name: Configure Celeritas
         id: configure
         uses: ./.github/actions/configure
