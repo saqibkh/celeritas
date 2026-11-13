@@ -1,0 +1,117 @@
+#-------------------------------- -*- yaml -*- ---------------------------------#
+# Copyright Celeritas contributors: see top-level COPYRIGHT file for details
+# SPDX-License-Identifier: (Apache-2.0 OR MIT)
+#-----------------------------------------------------------------------------#
+# Build the spack orange-g4@11.3 configuration with CUDA and run the whole test
+# suite on a simulated NVIDIA H100 (PantheonSim,
+# https://github.com/pantheongpu/pantheonsim). The simulator is functional
+# only: it has no timing model and does not replace real-GPU testing.
+#
+# The setup-pantheonsim action puts the simulator's CUDA driver and runtime on
+# LD_LIBRARY_PATH (with VGPU_GPU=nvidia/h100), so ctest and every test it
+# launches see the simulated H100, as they would under `vgpu run`.
+#-----------------------------------------------------------------------------#
+
+name: gpu-sim-geant4
+on:
+  workflow_dispatch: {}
+  push:
+    branches:
+      - gpu-sim-geant4
+
+concurrency:
+  group: gpu-sim-geant4-${{github.event.number || github.ref_name}}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  h100:
+    name: orange-g4@11.3-cuda-simulated-h100
+    runs-on: ubuntu-24.04
+    timeout-minutes: 360
+    env:
+      CELER_CMAKE_PRESET: h100sim
+      CELER_RUN_NAME: spack-orange-g4@11.3-cuda-simulated-h100
+      CXXSTD: 20
+    steps:
+      - name: Check out Celeritas
+        uses: actions/checkout@v7
+
+      # Same spack environment as the orange-g4@11.3 job in build-spack.yml
+      - name: Set up Spack environment
+        uses: ./.github/actions/setup-spack
+        with:
+          cxxstd: ${{env.CXXSTD}}
+          add: root geant4@11.3
+
+      # PTX-only builds (90-virtual) and a shared CUDA runtime run on the
+      # simulator. The action installs only part of the toolkit, so add the
+      # NVTX and Thrust/CUB (CCCL) headers that corecel needs.
+      - name: Set up the simulated H100 and CUDA toolkit
+        uses: pantheongpu/setup-pantheonsim@68edfd58c091361dd6baf060b63de412e544d858 # v0.1.7
+        with:
+          gpu: nvidia/h100
+          cuda-toolkit: "13.0"
+      - name: Install CUDA headers
+        run: |
+          sudo apt-get -q -y install --no-install-recommends \
+            cuda-nvtx-13-0 cuda-cccl-13-0
+          nvidia-smi -L
+
+      ### BUILD ###
+
+      - name: Configure Celeritas
+        id: configure
+        uses: ./.github/actions/configure
+        env:
+          CC: "clang-18"
+          CXX: "clang++-18"
+        with:
+          preset: ${{env.CELER_CMAKE_PRESET}}
+          presets-file: "ci-ubuntu-github-h100sim.json"
+
+      - name: Build all
+        id: build
+        uses: ./.github/actions/build-cached
+        with:
+          name: ${{env.CELER_RUN_NAME}}
+          preset: ${{env.CELER_CMAKE_PRESET}}
+          ccache-max-size: "1Gi"
+
+      ### TEST ###
+
+      # AsyncSnapshotTest.device_pending hangs on the simulator: a
+      # cudaMemcpyAsync queued behind a pending host function blocks the
+      # calling thread (pantheongpu/pantheonsim#634). It is the only test
+      # skipped; the other AsyncSnapshot cases run.
+      - name: Run tests
+        id: test
+        uses: ./.github/actions/run-ctest
+        env:
+          GTEST_FILTER: "-AsyncSnapshotTest.device_pending"
+        with:
+          name: ${{env.CELER_RUN_NAME}}
+          preset: ${{env.CELER_CMAKE_PRESET}}
+
+      # The test harness skips tests with "device" in the name if it sees no
+      # device: fail if any test printed that.
+      - name: Check that the device tests ran
+        if: ${{ !cancelled() && steps.build.outputs.outcome == 'success' }}
+        run: |
+          if grep -q "Disabling tests with 'device'" build/Testing/Temporary/LastTest.log; then
+            echo "::error::device tests were skipped (no device seen)"
+            exit 1
+          fi
+
+      - name: Upload full test XML
+        if: ${{ !cancelled() && steps.build.outputs.outcome == 'success' }}
+        uses: actions/upload-artifact@v7
+        with:
+          name: test-xml-${{env.CELER_RUN_NAME}}
+          path: test-output/
+          if-no-files-found: error
+          retention-days: 30
+
+# vim: set nowrap tw=100:
