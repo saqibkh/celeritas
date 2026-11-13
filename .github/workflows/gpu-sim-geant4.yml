@@ -70,8 +70,9 @@ jobs:
         run: |
           jq '.configurePresets += [{
                 "name": "h100sim",
-                "inherits": ["orange", ".cuda"],
+                "inherits": ["orange"],
                 "cacheVariables": {
+                  "CELERITAS_USE_CUDA": {"type": "BOOL", "value": "ON"},
                   "CELERITAS_DEBUG": {"type": "BOOL", "value": "OFF"},
                   "CELERITAS_BUILTIN_covfie": {"type": "BOOL", "value": "ON"},
                   "CMAKE_CUDA_ARCHITECTURES": "90-virtual",
@@ -129,10 +130,11 @@ jobs:
           preset: ${{env.CELER_CMAKE_PRESET}}
 
       # The test harness skips tests with "device" in the name if it sees no
-      # device: fail if any test printed that.
+      # device: fail if CUDA is off or any test printed that.
       - name: Check that the device tests ran
         if: ${{ !cancelled() && steps.build.outputs.outcome == 'success' }}
         run: |
+          grep -q "^CELERITAS_USE_CUDA:BOOL=ON$" build/CMakeCache.txt
           if grep -q "Disabling tests with 'device'" build/Testing/Temporary/LastTest.log; then
             echo "::error::device tests were skipped (no device seen)"
             exit 1
