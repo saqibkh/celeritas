@@ -65,7 +65,9 @@ jobs:
       # Add an "h100sim" configure/build/test preset to the CI presets: the
       # spack "orange" configuration plus CUDA (PTX for the H100, shared
       # runtime), with longer test timeouts for the simulator and a ctest
-      # JUnit file holding every test.
+      # JUnit file holding every test. covfie is off as in ci-ubuntu-cuda.json
+      # (spack's covfie has no CUDA backend, and the builtin one's CUDA headers
+      # trip -Werror under clang).
       - name: Add simulated-H100 presets
         run: |
           jq '.configurePresets += [{
@@ -74,7 +76,7 @@ jobs:
                 "cacheVariables": {
                   "CELERITAS_USE_CUDA": {"type": "BOOL", "value": "ON"},
                   "CELERITAS_DEBUG": {"type": "BOOL", "value": "OFF"},
-                  "CELERITAS_BUILTIN_covfie": {"type": "BOOL", "value": "ON"},
+                  "CELERITAS_USE_covfie": {"type": "BOOL", "value": "OFF"},
                   "CMAKE_CUDA_ARCHITECTURES": "90-virtual",
                   "CMAKE_CUDA_COMPILER": "/usr/local/cuda-13.0/bin/nvcc",
                   "CMAKE_CUDA_COMPILER_LAUNCHER": "ccache",
